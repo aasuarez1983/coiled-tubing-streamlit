@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter1d
 from sklearn.metrics import r2_score
+import plotly.graph_objs as go
 
 st.set_page_config(layout="wide")
 st.title("Visualización de Patrones de Coiled Tubing: Tendencias de Velocidad (Hasta 50 pozos)")
@@ -104,7 +105,7 @@ if archivos:
         df_concat = pd.concat(df_total)
         run_ids = df_concat["run_id"].unique()
 
-        # -------- GRAFICOS ORIGINALES -----------
+        # -------- GRAFICOS ORIGINALES MATPLOTLIB -----------
         st.subheader("Tensión vs Profundidad (todas las curvas)")
         fig1, ax1 = plt.subplots(figsize=(12, 6))
         for i, run_id in enumerate(run_ids):
@@ -141,7 +142,7 @@ if archivos:
         ax3.grid(True)
         st.pyplot(fig3)
 
-        # -------- GRAFICO VELOCIDAD PROMEDIO vs PROFUNDIDAD + TENDENCIAS SOLO DESDE PROFUNDIDAD SELECCIONADA --------
+        # -------- GRAFICO VELOCIDAD PROMEDIO vs PROFUNDIDAD (PLOTLY INTERACTIVO) --------
         profundidad_inicio = 2400
         profundidad_final = int(np.ceil(df_concat["profundidad_m"].max() / zona_range) * zona_range)
         zonas = []
@@ -157,34 +158,81 @@ if archivos:
                 vel_prom = df_concat.loc[mask, "velocidad_ftmin"].mean()
                 vel_plot_x.append((start + end) / 2)
                 vel_plot_y.append(vel_prom)
-        st.subheader(f"Velocidad promedio vs profundidad (zonas desde {profundidad_inicio}m)")
-        fig_vel, ax_vel = plt.subplots(figsize=(10, 5))
-        ax_vel.plot(vel_plot_x, vel_plot_y, marker='o', color='indianred', label="Promedio")
+        st.subheader(f"Velocidad promedio vs profundidad (zonas desde {profundidad_inicio}m) [Interactivo]")
 
-        # --- TENDENCIAS SOLO DESDE PROFUNDIDAD SELECCIONADA ---
+        # Ajustar ejes a los valores de input box y los datos
+        x_min = profundidad_inicio
+        x_max = df_concat["profundidad_m"].max()
+        y_min = min(vel_plot_y) if vel_plot_y else 0
+        y_max = max(vel_plot_y) if vel_plot_y else 10
+
+        # TENDENCIAS SOLO DESDE PROFUNDIDAD SELECCIONADA
         mask_tend_vel = np.array(vel_plot_x) >= profundidad_tendencia
         x_tend_vel = np.array(vel_plot_x)[mask_tend_vel]
         y_tend_vel = np.array(vel_plot_y)[mask_tend_vel]
 
+        fig_plotly = go.Figure()
+
+        # Curva promedio con hover
+        fig_plotly.add_trace(go.Scatter(
+            x=vel_plot_x, y=vel_plot_y, mode='lines+markers',
+            name='Promedio',
+            marker=dict(size=8, color='indianred'),
+            line=dict(color='indianred', width=2),
+            hovertemplate='Profundidad: %{x:.1f} m<br>Velocidad: %{y:.2f} ft/min'
+        ))
+
         if len(x_tend_vel) > 3:
             # Cuadrática
             y_quad, r2_quad, eq_quad = polinomio_info(x_tend_vel, y_tend_vel, 2)
-            ax_vel.plot(x_tend_vel, y_quad, "--", color="firebrick", label=f"Cuadrática\n{eq_quad}\n$R^2$={r2_quad:.3f}")
+            fig_plotly.add_trace(go.Scatter(
+                x=x_tend_vel, y=y_quad, mode='lines', name=f"Cuadrática<br>{eq_quad}<br>R²={r2_quad:.3f}",
+                line=dict(dash='dash', color='firebrick')
+            ))
             # Exponencial
             y_exp, r2_exp, eq_exp = exponencial_info(x_tend_vel, y_tend_vel)
             if not np.isnan(r2_exp):
-                ax_vel.plot(np.sort(x_tend_vel), y_exp, "--", color="goldenrod", label=f"Exponencial\n{eq_exp}\n$R^2$={r2_exp:.3f}")
+                fig_plotly.add_trace(go.Scatter(
+                    x=np.sort(x_tend_vel), y=y_exp, mode='lines', name=f"Exponencial<br>{eq_exp}<br>R²={r2_exp:.3f}",
+                    line=dict(dash='dot', color='goldenrod')
+                ))
             # Logarítmica
             y_log, r2_log, eq_log = logaritmica_info(x_tend_vel, y_tend_vel)
             if not np.isnan(r2_log):
-                ax_vel.plot(np.sort(x_tend_vel), y_log, "--", color="purple", label=f"Logarítmica\n{eq_log}\n$R^2$={r2_log:.3f}")
+                fig_plotly.add_trace(go.Scatter(
+                    x=np.sort(x_tend_vel), y=y_log, mode='lines', name=f"Logarítmica<br>{eq_log}<br>R²={r2_log:.3f}",
+                    line=dict(dash='dot', color='purple')
+                ))
 
-        ax_vel.set_xlabel("Profundidad (m)")
-        ax_vel.set_ylabel("Velocidad Promedio (ft/min)")
-        ax_vel.set_title(f"Velocidad promedio por zona (todas las carreras)")
-        ax_vel.grid(True)
-        ax_vel.legend(fontsize=9, loc="best")
-        st.pyplot(fig_vel)
+        fig_plotly.update_layout(
+            xaxis_title="Profundidad (m)",
+            yaxis_title="Velocidad Promedio (ft/min)",
+            title=f"Velocidad promedio por zona (todas las carreras) [Interactivo]",
+            legend=dict(font=dict(size=10)),
+            width=900, height=500,
+            xaxis=dict(
+                range=[x_min, x_max],
+                dtick=zona_range,
+                showgrid=True,
+                gridwidth=1,
+                gridcolor="rgba(200,200,200,0.8)"
+            ),
+            yaxis=dict(
+                range=[y_min-1, y_max+1],
+                dtick=2,  # grilla principal cada 2 ft/min
+                showgrid=True,
+                gridwidth=1,
+                gridcolor="rgba(200,200,200,0.8)",
+                minor=dict(
+                    dtick=2,
+                    showgrid=True,
+                    gridwidth=0.5,
+                    gridcolor="rgba(200,200,200,0.3)",
+                ),
+            ),
+        )
+
+        st.plotly_chart(fig_plotly, use_container_width=True)
 
         # -------- TABLA DE PROMEDIOS POR ZONA (DESDE 2400m) --------
         st.subheader(f"Tabla de promedios por zona (cada {zona_range} m, desde {profundidad_inicio}m)")
