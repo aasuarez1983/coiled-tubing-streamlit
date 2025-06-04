@@ -461,3 +461,44 @@ if archivos:
             )
 
             st.plotly_chart(fig, use_container_width=True)
+# --------- GRAFICO PROMEDIO + TENDENCIA SELECCIONABLE ---------
+        st.subheader("Velocidad promedio vs profundidad (zonas) con tendencia seleccionable")
+        tipo_tendencia = st.selectbox(
+            "Elige el tipo de tendencia a mostrar:",
+            options=["Cuadrática", "Exponencial", "Logarítmica"],
+            index=0
+        )
+        mask_tend_vel = np.array(vel_plot_x) >= profundidad_tendencia
+        x_tend_vel = np.array(vel_plot_x)[mask_tend_vel]
+        y_tend_vel = np.array(vel_plot_y)[mask_tend_vel]
+        fig_tend = go.Figure()
+        fig_tend.add_trace(go.Scatter(
+            x=vel_plot_x, y=vel_plot_y, mode='lines+markers',
+            name='Promedio',
+            marker=dict(size=8, color='indianred'),
+            line=dict(color='indianred', width=3),
+            hovertemplate="Promedio<br>Profundidad: %{x:.1f} m<br>Velocidad: %{y:.2f} ft/min"
+        ))
+        if len(x_tend_vel) > 3:
+            if tipo_tendencia == "Cuadrática":
+                y_tend, r2, eq = polinomio_info(x_tend_vel, y_tend_vel, 2)
+                color = 'firebrick'
+            elif tipo_tendencia == "Exponencial":
+                y_tend, r2, eq = exponencial_info(x_tend_vel, y_tend_vel)
+                color = 'goldenrod'
+            elif tipo_tendencia == "Logarítmica":
+                y_tend, r2, eq = logaritmica_info(x_tend_vel, y_tend_vel)
+                color = 'purple'
+            fig_tend.add_trace(go.Scatter(
+                x=x_tend_vel, y=y_tend, mode='lines',
+                name=f"{tipo_tendencia} <br>{eq}<br>R²={r2:.3f}",
+                line=dict(dash='dash', color=color)
+            ))
+        fig_tend.update_layout(
+            xaxis=dict(title="Profundidad (m)", side="bottom", range=[x_min, x_max], dtick=zona_range),
+            xaxis2=dict(title="Profundidad (m)", side="top", overlaying="x", showgrid=False, showline=True, zeroline=False),
+            yaxis=dict(title="Velocidad Promedio (ft/min)", range=[y_min-1, y_max+1], dtick=2),
+            legend=dict(font=dict(size=10)),
+            width=900, height=500
+        )
+        st.plotly_chart(fig_tend, use_container_width=True)
