@@ -1,10 +1,10 @@
 streamlit
 pandas
 numpy
+scipy
+sklearn
 plotly
 matplotlib
-scikit-learn
 unidecode
-scipy
+openpyxl
 kaleido
-pdfkit
