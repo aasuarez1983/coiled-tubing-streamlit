@@ -10,29 +10,31 @@ import re
 st.set_page_config(layout="wide")
 st.title("Visualización de Patrones de Coiled Tubing: Comparativo Multi-Pozos (Plotly Interactivo)")
 
-# --- LIMPIEZA UNIVERSAL DE FORMATO DECIMAL Y TEXTOS RAROS ---
+# --- Diccionario de nombres equivalentes de columnas ---
+NOMBRES_EQUIVALENTES = {
+    "CT-Tension Tuberia(lb)": "CT-Tension Tuberia(lb)",
+    "CT-Peso Tuberia(lb)": "CT-Tension Tuberia(lb)",
+    "CT-Profundidad(m)": "CT-Profundidad(m)",
+    "Measured Depth (m)": "CT-Profundidad(m)",
+    # Puedes agregar más equivalentes aquí si surgen más casos
+}
+
 def limpiar_decimal_universal(col_serie):
     def corrige(valor):
         if pd.isnull(valor) or str(valor).strip() == '':
             return np.nan
         s = str(valor).strip().replace(" ", "")
-        # Elimina cualquier caracter que no sea número, punto, coma, e, E, signo menos (excepto separador de miles y decimal)
         s = re.sub(r"[^0-9\-,\.eE]", "", s)
-        # Corrige miles/decimales según el último separador
         if s.count(',') and s.count('.'):
             if s.rfind(',') > s.rfind('.'):
                 s = s.replace('.', '').replace(',', '.')
             else:
                 s = s.replace(',', '')
         elif s.count(','):
-            # Si hay solo una coma y menos de 4 caracteres luego, es decimal: 1234,5 → 1234.5
             if len(s.split(',')[-1]) <= 3:
                 s = s.replace(',', '.')
             else:
                 s = s.replace(',', '')
-        elif s.count('.'):
-            # Si hay solo un punto y menos de 4 caracteres luego, es decimal: 1234.5 → 1234.5
-            pass # ya está OK
         try:
             return float(s)
         except Exception:
@@ -100,7 +102,6 @@ def logaritmica_info(x, y):
     y_pred_total = np.polyval(p, np.log(x_full))
     return y_pred_total, r2, eq
 
-# --- Carga de datos de pozos ---
 if archivos:
     df_total = []
     colores = [
@@ -117,32 +118,49 @@ if archivos:
         xls = pd.ExcelFile(archivo)
         for hoja in xls.sheet_names:
             df = xls.parse(hoja, dtype=str)
+            # --- Normalizar nombres de columnas ---
+            df.columns = [NOMBRES_EQUIVALENTES.get(c, c) for c in df.columns]
+
+            # Listado de columnas clave
             columnas_ct = [
-                "CT-Profundidad(m)", "CT-Peso Tuberia(lb)",
+                "CT-Profundidad(m)", "CT-Tension Tuberia(lb)",
                 "CT-Velocidad de Viaje(ft/min)", "CT-Caudal Bombeo Liquido(bbl/min)"
             ]
+
+            # Verifica presencia de cada columna
             for col in columnas_ct:
-                if col in df.columns:
+                if col not in df.columns:
+                    st.error(
+                        f"❌ En la hoja **'{hoja}'** falta la columna obligatoria '**{col}**'.\n"
+                        f"Columnas disponibles: {list(df.columns)}"
+                    )
+                    # Salta el procesamiento de esta hoja
+                    break
+            else:
+                # Si no faltó ninguna columna, continúa procesando normalmente:
+                for col in columnas_ct:
                     df[col] = limpiar_decimal_universal(df[col])
-            df["run_id"] = hoja
-            if "DateTime" in df.columns:
-                df["DateTime"] = pd.to_datetime(df["DateTime"], errors="coerce")
-            df["profundidad_m"] = pd.to_numeric(df["CT-Profundidad(m)"], errors='coerce').abs()
-            df["Peso_lb"] = pd.to_numeric(df["CT-Peso Tuberia(lb)"], errors='coerce')
-            df["velocidad_ftmin"] = pd.to_numeric(df["CT-Velocidad de Viaje(ft/min)"], errors='coerce')
-            df["caudal_bblmin"] = pd.to_numeric(df["CT-Caudal Bombeo Liquido(bbl/min)"], errors='coerce')
-            df_bajada = df[df["velocidad_ftmin"] > 0].copy()
-            if df_bajada.empty:
-                continue
-            max_prof = df_bajada["profundidad_m"].max()
-            idx_max = df_bajada[df_bajada["profundidad_m"] == max_prof].index[0]
-            df_bajada = df_bajada.loc[:idx_max]
-            df_bajada = df_bajada.drop_duplicates(subset="profundidad_m", keep="first")
-            df_bajada = df_bajada.sort_values("profundidad_m")
-            df_bajada["Peso_filtrada"] = gaussian_filter1d(df_bajada["Peso_lb"].fillna(0), sigma=5)
-            df_bajada["velocidad_filtrada"] = gaussian_filter1d(df_bajada["velocidad_ftmin"].fillna(0), sigma=5)
-            df_bajada["caudal_filtrado"] = gaussian_filter1d(df_bajada["caudal_bblmin"].fillna(0), sigma=5)
-            df_total.append(df_bajada)
+
+                df["run_id"] = hoja
+                if "DateTime" in df.columns:
+                    df["DateTime"] = pd.to_datetime(df["DateTime"], errors="coerce")
+                df["profundidad_m"] = pd.to_numeric(df["CT-Profundidad(m)"], errors='coerce').abs()
+                df["tension_lb"] = pd.to_numeric(df["CT-Tension Tuberia(lb)"], errors='coerce')
+                df["velocidad_ftmin"] = pd.to_numeric(df["CT-Velocidad de Viaje(ft/min)"], errors='coerce')
+                df["caudal_bblmin"] = pd.to_numeric(df["CT-Caudal Bombeo Liquido(bbl/min)"], errors='coerce')
+                # ... el resto de tu lógica ...
+                df_bajada = df[df["velocidad_ftmin"] > 0].copy()
+                if df_bajada.empty:
+                    continue
+                max_prof = df_bajada["profundidad_m"].max()
+                idx_max = df_bajada[df_bajada["profundidad_m"] == max_prof].index[0]
+                df_bajada = df_bajada.loc[:idx_max]
+                df_bajada = df_bajada.drop_duplicates(subset="profundidad_m", keep="first")
+                df_bajada = df_bajada.sort_values("profundidad_m")
+                df_bajada["tension_filtrada"] = gaussian_filter1d(df_bajada["tension_lb"].fillna(0), sigma=5)
+                df_bajada["velocidad_filtrada"] = gaussian_filter1d(df_bajada["velocidad_ftmin"].fillna(0), sigma=5)
+                df_bajada["caudal_filtrado"] = gaussian_filter1d(df_bajada["caudal_bblmin"].fillna(0), sigma=5)
+                df_total.append(df_bajada)
 
     # --- Carga de datos de Dogleg/Tortuosidad (opcional) ---
     dogleg_data_dict = {}
@@ -150,6 +168,9 @@ if archivos:
         xls_dogleg = pd.ExcelFile(archivo_dogleg)
         for hoja in xls_dogleg.sheet_names:
             df_dogleg = xls_dogleg.parse(hoja, dtype=str)
+            # --- Normalizar nombres de columnas ---
+            df_dogleg.columns = [NOMBRES_EQUIVALENTES.get(c, c) for c in df_dogleg.columns]
+            # --- Normalizar columnas con unidecode ---
             df_dogleg.columns = [unidecode.unidecode(str(c).strip().replace(" ", "_").lower()) for c in df_dogleg.columns]
             prof_cols = [c for c in df_dogleg.columns if "profun" in c]
             dogleg_cols = [c for c in df_dogleg.columns if "dogleg" in c]
@@ -174,6 +195,7 @@ if archivos:
                 columns={dogleg_cols[0]: "dogleg", tort_cols[0]: "tortuosidad"}
             )
 
+
     if df_total:
         df_concat = pd.concat(df_total)
         run_ids = df_concat["run_id"].unique()
@@ -185,28 +207,28 @@ if archivos:
             default=list(run_ids)[:3]
         )
 
-        st.subheader("Peso vs Profundidad (selección de pozos)")
-        fig_Peso = go.Figure()
+        st.subheader("Tensión vs Profundidad (selección de pozos)")
+        fig_tension = go.Figure()
         for i, run_id in enumerate(pozos_a_ver):
             grupo = df_concat[df_concat['run_id'] == run_id]
-            fig_Peso.add_trace(go.Scatter(
-                x=grupo["profundidad_m"], y=grupo["Peso_filtrada"],
+            fig_tension.add_trace(go.Scatter(
+                x=grupo["profundidad_m"], y=grupo["tension_filtrada"],
                 name=run_id,
                 mode="lines",
                 line=dict(color=colores[i % len(colores)]),
-                hovertemplate=run_id + "<br>Profundidad: %{x:.1f} m<br>Peso: %{y:.1f} lb"
+                hovertemplate=run_id + "<br>Profundidad: %{x:.1f} m<br>Tensión: %{y:.1f} lb"
             ))
-        fig_Peso.update_layout(
+        fig_tension.update_layout(
             xaxis=dict(title="Profundidad (m)", side="bottom"),
             xaxis2=dict(
                 title="Profundidad (m)", side="top", overlaying="x", showgrid=False, showline=True, zeroline=False
             ),
-            yaxis=dict(title="Peso Filtrada (lb)"),
+            yaxis=dict(title="Tensión Filtrada (lb)"),
             legend=dict(font=dict(size=8)),
             width=950, height=500,
             margin=dict(l=60, r=40, t=60, b=60),
         )
-        st.plotly_chart(fig_Peso, use_container_width=True)
+        st.plotly_chart(fig_tension, use_container_width=True)
 
         st.subheader("Velocidad vs Profundidad (selección de pozos)")
         fig_vel = go.Figure()
@@ -354,7 +376,7 @@ if archivos:
 
             # Índices de eficiencia
             grupo["indice_eficiencia_mecanica"] = grupo["velocidad_filtrada"] / (
-                        grupo["Peso_filtrada"].abs() * (1 + grupo["dogleg"]))
+                        grupo["tension_filtrada"].abs() * (1 + grupo["dogleg"]))
             grupo["indice_eficiencia_geom"] = grupo["velocidad_filtrada"] / (1 + grupo["dogleg"] + grupo["tortuosidad"])
 
             fig = go.Figure()
@@ -476,7 +498,7 @@ if archivos:
             x=vel_plot_x, y=vel_plot_y, mode='lines+markers',
             name='Promedio',
             marker=dict(size=8, color='indianred'),
-            line=dict(color='indianred', width=3),
+            line=dict(color='indianred', width=2),
             hovertemplate="Promedio<br>Profundidad: %{x:.1f} m<br>Velocidad: %{y:.2f} ft/min"
         ))
         if len(x_tend_vel) > 3:
@@ -502,3 +524,335 @@ if archivos:
             width=900, height=500
         )
         st.plotly_chart(fig_tend, use_container_width=True)
+
+# ============================ ## ============================ ## ============================ ## ============================ ## ============================ #
+# ============================ ## ============================ ##   MÓDULO DE MACHINE LEARNING ## ============================ ## ============================ #
+# ============================ ## ============================ ## ============================ ## ============================ ## ============================ #
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.graph_objs as go
+import pickle
+import io
+from scipy.stats import norm
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, r2_score
+
+st.markdown("---")
+st.header("🔮 Módulo de Predicción Global de Velocidad con Machine Learning")
+
+if "df_concat" in locals() and not df_concat.empty:
+    # Merge dogleg y tortuosidad para todos los pozos
+    df_ml = df_concat.copy()
+    if dogleg_data_dict:
+        frames = []
+        for run_id in df_ml["run_id"].unique():
+            df_p = df_ml[df_ml["run_id"] == run_id].copy()
+            if run_id in dogleg_data_dict:
+                df_dog = dogleg_data_dict[run_id].copy()
+                df_merged = pd.merge_asof(
+                    df_p.sort_values("profundidad_m"),
+                    df_dog.sort_values("profundidad_m"),
+                    on="profundidad_m", direction="nearest", tolerance=5
+                )
+            else:
+                df_p["dogleg"] = 0
+                df_p["tortuosidad"] = 0
+                df_merged = df_p
+            frames.append(df_merged)
+        df_ml = pd.concat(frames, ignore_index=True)
+    else:
+        df_ml["dogleg"] = 0
+        df_ml["tortuosidad"] = 0
+
+    features = ["profundidad_m", "dogleg", "tortuosidad"]
+    target = "velocidad_filtrada" if "velocidad_filtrada" in df_ml else "velocidad_ftmin"
+
+    df_train = df_ml.dropna(subset=features + [target]).copy()
+    if len(df_train) < 30:
+        st.warning("No hay suficientes datos en la base total para entrenar un modelo robusto.")
+    else:
+        X = df_train[features]
+        y = df_train[target]
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=0)
+
+        # Entrenamiento del modelo global
+        model = RandomForestRegressor(n_estimators=120, random_state=0)
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
+        r2 = r2_score(y_test, y_pred)
+        mse = mean_squared_error(y_test, y_pred)
+
+        st.write(f"**Score R² global:** {r2:.3f} | **MSE:** {mse:.2f} | Muestras de entrenamiento: {len(df_train)}")
+
+        # Exportar modelo entrenado
+        buf = io.BytesIO()
+        pickle.dump(model, buf)
+        buf.seek(0)
+        st.download_button(
+            label="⬇️ Descargar modelo entrenado (.pkl)",
+            data=buf,
+            file_name="modelo_coiled_tubing_rf.pkl",
+            mime="application/octet-stream"
+        )
+
+        # Importancia de variables
+        importancias = model.feature_importances_
+        import matplotlib.pyplot as plt
+        fig_import = plt.figure(figsize=(4, 2.5))
+        plt.barh(features, importancias, color='teal')
+        plt.title("Importancia de variables en el modelo")
+        plt.tight_layout()
+        st.pyplot(fig_import)
+        st.info(
+            f"Tortuosidad representa el {importancias[2] * 100:.1f}% de la importancia para predecir la velocidad."
+            if importancias[2] > max(importancias[0], importancias[1]) else
+            f"Tortuosidad NO es la principal variable (importancia: {importancias[2] * 100:.1f}%)."
+        )
+
+        # Comparar curva real vs predicha de cualquier pozo cargado
+        st.subheader("Comparar curva real y predicha de velocidad para un pozo cargado")
+        pozo_sel = st.selectbox("Selecciona un pozo para comparar real vs predicho:", df_ml["run_id"].unique())
+        df_comp = df_ml[df_ml["run_id"] == pozo_sel].dropna(subset=features)
+        if not df_comp.empty:
+            y_pred_comp = model.predict(df_comp[features])
+            fig_comp = go.Figure()
+            fig_comp.add_trace(go.Scatter(
+                x=df_comp["profundidad_m"], y=df_comp[target],
+                mode="lines+markers", name="Velocidad real", marker=dict(color="dodgerblue")
+            ))
+            fig_comp.add_trace(go.Scatter(
+                x=df_comp["profundidad_m"], y=y_pred_comp,
+                mode="lines+markers", name="Velocidad predicha", marker=dict(color="orange")
+            ))
+            fig_comp.update_layout(
+                xaxis_title="Profundidad (m)",
+                yaxis_title="Velocidad (ft/min)",
+                title=f"Comparación velocidad real vs predicha en pozo '{pozo_sel}'",
+                width=800, height=400
+            )
+            st.plotly_chart(fig_comp, use_container_width=True)
+        else:
+            st.warning(f"No hay datos completos para el pozo seleccionado ({pozo_sel}).")
+
+        # Curva IEW
+        st.subheader("Curva de IEW (Índice Exploratorio de Velocidad)")
+        df_train["IEW"] = df_train[target] / (1 + df_train["tortuosidad"] + df_train["dogleg"])
+        fig_iew = go.Figure()
+        fig_iew.add_trace(go.Scatter(
+            x=df_train["profundidad_m"], y=df_train["IEW"],
+            mode='markers', name="IEW",
+            marker=dict(color='mediumvioletred', size=3),
+            hovertemplate="Profundidad: %{x:.1f} m<br>IEW: %{y:.2f}"
+        ))
+        fig_iew.update_layout(
+            xaxis_title="Profundidad (m)",
+            yaxis_title="IEW",
+            title="IEW vs Profundidad (base global)",
+            width=800, height=350
+        )
+        st.plotly_chart(fig_iew, use_container_width=True)
+
+        st.caption(
+            "IEW = Velocidad / (1 + Tortuosidad + Dogleg). Si la curva IEW se mantiene estable o revela correlación, "
+            "puede ser útil como predictor adicional de eficiencia o fricción geométrica."
+        )
+
+        # -----------------------------------------------------
+        #   APLICAR MODELO SOBRE DATA TEÓRICA (ARCHIVO ADICIONAL)
+        # -----------------------------------------------------
+        st.markdown("### 🧪 Predicción de velocidad sobre datos teóricos cargados por el usuario")
+        archivo_teorico = st.file_uploader(
+            "Cargar archivo con datos teóricos de Profundidad, Tortuosidad y Dogleg (.xlsx, .csv)",
+            type=["xlsx", "csv"], key="teorico"
+        )
+        if archivo_teorico is not None:
+            if archivo_teorico.name.endswith(".xlsx"):
+                df_teorico = pd.read_excel(archivo_teorico)
+            else:
+                df_teorico = pd.read_csv(archivo_teorico)
+            # Mostrar columnas detectadas
+            st.write("Columnas en el archivo teórico:", list(df_teorico.columns))
+            columnas_teorico = [str(col).strip().lower() for col in df_teorico.columns]
+            cols_dict = {}
+            for i, c in enumerate(columnas_teorico):
+                if "profun" in c:
+                    cols_dict["profundidad_m"] = df_teorico.columns[i]
+                if "tortuo" in c:
+                    cols_dict["tortuosidad"] = df_teorico.columns[i]
+                if "dogleg" in c:
+                    cols_dict["dogleg"] = df_teorico.columns[i]
+            st.write("Columnas equivalentes encontradas:", cols_dict)
+            faltantes = [c for c in features if c not in cols_dict]
+            if not faltantes:
+                df_teorico_pred = df_teorico.rename(columns={v: k for k, v in cols_dict.items()})
+                df_teorico_pred = df_teorico_pred[features]
+                # Predecir
+                y_pred_teo = model.predict(df_teorico_pred)
+                df_teorico_pred["velocidad_predicha"] = y_pred_teo
+
+                # Score ponderado respecto al set de entrenamiento
+                mean_vel = y.mean()
+                std_vel = y.std()
+                df_teorico_pred['score_normalizado'] = (df_teorico_pred['velocidad_predicha'] - mean_vel) / std_vel
+                df_teorico_pred['ponderacion_prediccion'] = norm.cdf(df_teorico_pred['score_normalizado'])
+                st.info(
+                    "La ponderación de predicción ('ponderacion_prediccion') indica qué tan 'típica' es la velocidad predicha respecto al historial. "
+                    "Valores cercanos a 0.5 son muy habituales, extremos (<0.1 o >0.9) indican valores atípicos respecto al set de entrenamiento."
+                )
+
+                # Gráfico de predicción
+                fig_teo = go.Figure()
+                fig_teo.add_trace(go.Scatter(
+                    x=df_teorico_pred["profundidad_m"], y=df_teorico_pred["velocidad_predicha"],
+                    mode='lines+markers', name="Velocidad Predicha",
+                    marker=dict(color='royalblue')
+                ))
+                fig_teo.update_layout(
+                    title="Predicción de Velocidad sobre data teórica",
+                    xaxis_title="Profundidad (m)",
+                    yaxis_title="Velocidad predicha (ft/min)",
+                    width=800, height=350
+                )
+                st.plotly_chart(fig_teo, use_container_width=True)
+                st.dataframe(df_teorico_pred)
+
+                # --- Cálculo optimizado del tiempo de RIH usando integración por tramos (solo donde velocidad > 1 ft/min) ---
+
+                velocidad_min_ftmin = 1.0  # Umbral físico de velocidad mínima aceptable (puedes ajustar)
+                prof_column = "profundidad_m"
+                vel_column = "velocidad_predicha"
+
+                # Ordena el dataframe por profundidad (por si acaso)
+                df_teorico_pred = df_teorico_pred.sort_values(prof_column).reset_index(drop=True)
+
+                # Convierte velocidades a metros/min si está en ft/min (ajusta si tus unidades ya son m/min)
+                ft_to_m = 0.3048
+                df_teorico_pred["vel_pred_m_min"] = df_teorico_pred[vel_column] * ft_to_m
+
+                # Calcula diferencias de profundidad
+                df_teorico_pred["delta_prof"] = df_teorico_pred[prof_column].diff().fillna(0)
+
+                # Para evitar divisiones por cero o por velocidades irreales
+                df_teorico_pred["vel_pred_m_min_filtrado"] = df_teorico_pred["vel_pred_m_min"].where(
+                    df_teorico_pred["vel_pred_m_min"] > 0.5, np.nan
+                    # Solo considera velocidades > 0.5 m/min (~1.6 ft/min)
+                )
+
+                # Tiempo incremental solo donde velocidad es aceptable
+                df_teorico_pred["tiempo_min"] = df_teorico_pred["delta_prof"] / df_teorico_pred[
+                    "vel_pred_m_min_filtrado"]
+
+                # Suma el tiempo total
+                tiempo_total_min = df_teorico_pred["tiempo_min"].sum(skipna=True)
+                tiempo_total_horas = tiempo_total_min / 60.0
+                tiempo_total_dias = tiempo_total_horas / 24.0
+
+                # Muestra el resultado en negrita y azul
+                st.markdown(
+                    f"""<div style='background:#1565c0;color:white;padding:12px 18px;border-radius:8px;font-size:2rem;font-weight:bold;display:inline-block;'>
+                    ⏱️ Tiempo estimado de RIH: {tiempo_total_horas:.2f} horas | {tiempo_total_dias:.2f} días
+                    </div>""",
+                    unsafe_allow_html=True
+                )
+###-----------------------Reporte de PDF----------------------####
+import io
+import base64
+import tempfile
+import pdfkit  # pip install pdfkit
+from datetime import datetime
+
+# Utilidad para convertir figura plotly a base64 (PNG en memoria)
+def fig_to_base64(fig, width=900, height=400):
+    buf = io.BytesIO()
+    fig.write_image(buf, format="png", width=width, height=height)
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode()
+
+# Utilidad para matplotlib
+def mplfig_to_base64(fig):
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode()
+
+# Función para armar el HTML del reporte
+def get_html_report(fig_dict, resultados_dict, resumen_dict):
+    html = f"""
+    <html>
+    <head>
+    <meta charset="utf-8">
+    <style>
+    body {{ font-family: Arial, sans-serif; font-size: 15px; }}
+    h1,h2,h3 {{ color: #1565c0; }}
+    .section {{ margin-bottom: 2em; }}
+    .img-plot {{ max-width: 100%; border: 1px solid #bbb; margin-bottom: 1em; }}
+    .block {{ background: #e3f2fd; padding: 0.7em 1em; border-radius: 7px; }}
+    </style>
+    </head>
+    <body>
+    <h1>Reporte de Coiled Tubing: Multi-Pozos</h1>
+    <p>Fecha de generación: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</p>
+    """
+    html += "<div class='section'><h2>Resumen Inicial</h2><div class='block'>"
+    for k, v in resumen_dict.items():
+        html += f"<b>{k}:</b> {v}<br>"
+    html += "</div></div>"
+    html += "<div class='section'><h2>Gráficos de Parámetros Operativos</h2>"
+    for title, b64 in fig_dict["previo_ml"]:
+        html += f"<h3>{title}</h3><img class='img-plot' src='data:image/png;base64,{b64}' />"
+    html += "</div>"
+    html += "<div class='section'><h2>Resultados de Machine Learning</h2>"
+    for k, v in resultados_dict.items():
+        html += f"<div class='block'><b>{k}:</b> {v}</div>"
+    for title, b64 in fig_dict["ml"]:
+        html += f"<h3>{title}</h3><img class='img-plot' src='data:image/png;base64,{b64}' />"
+    html += "</div></body></html>"
+    return html
+
+# Cuando el usuario pulse el botón, se genera y descarga el PDF:
+if st.button("📄 Generar reporte completo en PDF"):
+    # Captura gráficos de antes del ML
+    figs_previo_ml = [
+        ("Tensión vs Profundidad", fig_to_base64(fig_tension)),
+        ("Velocidad vs Profundidad", fig_to_base64(fig_vel)),
+        ("Caudal vs Profundidad", fig_to_base64(fig_caudal)),
+        ("Comparativo de Velocidad Promedio", fig_to_base64(fig_comp)),
+        ("Tendencia de Velocidad", fig_to_base64(fig_tend)),
+    ]
+    # Captura gráficos del módulo ML
+    figs_ml = []
+    if 'fig_import' in locals():
+        figs_ml.append(("Importancia de Variables", mplfig_to_base64(fig_import)))
+    if 'fig_comp' in locals():
+        figs_ml.append(("Comparación Real vs Predicha", fig_to_base64(fig_comp)))
+    if 'fig_iew' in locals():
+        figs_ml.append(("Curva IEW", fig_to_base64(fig_iew)))
+    if 'fig_teo' in locals():
+        figs_ml.append(("Predicción en Pozo Teórico", fig_to_base64(fig_teo)))
+
+    resultados_dict = {
+        "Score R² global": f"{r2:.3f}",
+        "MSE": f"{mse:.2f}",
+        "Muestras entrenamiento": f"{len(df_train)}",
+        "Importancia tortuosidad": f"{importancias[2]*100:.2f}%"
+    }
+    resumen_dict = {
+        "Pozos analizados": ", ".join(run_ids),
+        "Configuración zonas": f"Rango zona = {zona_range} m",
+        "Tendencia usada": tipo_tendencia,
+    }
+    fig_dict = {"previo_ml": figs_previo_ml, "ml": figs_ml}
+    html_report = get_html_report(fig_dict, resultados_dict, resumen_dict)
+    # Genera PDF usando pdfkit (debes tener wkhtmltopdf instalado en el sistema)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_pdf:
+        pdfkit.from_string(html_report, tmp_pdf.name)
+        tmp_pdf.seek(0)
+        st.download_button(
+            label="⬇️ Descargar reporte en PDF",
+            data=tmp_pdf.read(),
+            file_name="reporte_coiled_tubing.pdf",
+            mime="application/pdf"
+        )
